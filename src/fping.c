@@ -300,6 +300,9 @@ int elapsed_flag, version_flag, count_flag, loop_flag;
 int per_recv_flag, report_all_rtts_flag, name_flag, addr_flag, backoff_flag;
 int multif_flag;
 int timestamp_flag = 0;
+int json_stats_flag = 0;
+int runFlag = 0;
+
 #if defined( DEBUG ) || defined( _DEBUG )
 int randomly_lose_flag, sent_times_flag, trace_flag, print_per_system_flag;
 int lose_factor;
@@ -381,7 +384,7 @@ int main( int argc, char **argv )
 
     /* get command line options */
 
-    while( ( c = getopt( argc, argv, "gedhlmnqusaAvDz:t:H:i:p:f:r:c:b:C:Q:B:S:I:T:O:" ) ) != EOF )
+    while( ( c = getopt( argc, argv, "gedhlmnqusaAvDz:t:H:i:p:f:r:c:b:C:Q:B:S:I:T:O:j:" ) ) != EOF )
     {
         switch( c )
         {
@@ -552,6 +555,9 @@ int main( int argc, char **argv )
             else {
                 usage(1);
             }
+            break;
+        case 'j':
+            json_stats_flag = 1;
             break;
         default:
             fprintf(stderr, "see 'fping -h' for usage information\n");
@@ -1164,6 +1170,7 @@ void print_per_system_stats( void )
     char *buf;
     int bufsize;
     int resp;
+    float trackLoss;
 
     bufsize = max_hostname_len + 1;
     buf = ( char* )malloc( bufsize );
@@ -1181,7 +1188,15 @@ void print_per_system_stats( void )
     for( i = 0; i < num_hosts; i++ )
     {
         h = table[i];
-        fprintf( stderr, "%s%s :", h->host, h->pad );
+        if(i == 0)
+        {
+            if(json_stats_flag)
+                printf("{ \"stats\": { ");
+            else
+                printf("\"stats\": { ");
+        }
+
+        printf("\"%s\" : ", h->host);
 
         if( report_all_rtts_flag )
         {
@@ -1201,27 +1216,31 @@ void print_per_system_stats( void )
         {
             if( h->num_recv <= h->num_sent )
             {
-                fprintf( stderr, " xmt/rcv/%%loss = %d/%d/%d%%",
-                    h->num_sent, h->num_recv, h->num_sent > 0 ?
-                    ( ( h->num_sent - h->num_recv ) * 100 ) / h->num_sent : 0 );
+                trackLoss = h->num_sent > 0 ? ( ( h->num_sent - h->num_recv ) * 100 ) / h->num_sent : 0;
 
             }/* IF */
             else
             {
-                fprintf( stderr, " xmt/rcv/%%return = %d/%d/%d%%",
-                    h->num_sent, h->num_recv,
-                    ( ( h->num_recv * 100 ) / h->num_sent ) );
-          
+                trackLoss = -1;
+
             }/* ELSE */
-          
+
             if( h->num_recv )
             {
                 avg = h->total_time / h->num_recv;
-                fprintf( stderr, ", min/avg/max = %s", sprint_tm( h->min_reply ) );
-                fprintf( stderr, "/%s", sprint_tm( avg ) );
-                fprintf( stderr, "/%s", sprint_tm( h->max_reply ) );
-          
+                printf("{ \"xmt\": %d, \"recv\": %d, \"loss\": %0.2f, \"min\": %s, \"avg\": %s, \"max\": %s }",
+                        h->num_sent, h->num_recv, trackLoss, sprint_tm(h->min_reply), sprint_tm(avg), sprint_tm(h->max_reply));
+
             }/* IF */
+            else
+            {
+                printf("{ \"xmt\": %d, \"recv\": %d, \"loss\": 100, \"min\": *, \"avg\": *, \"max\": * }",
+                        h->num_sent, h->num_recv);
+            }
+            if(i < (num_hosts - 1))
+            {
+                printf(",");
+            }
           
             fprintf(stderr, "\n");
 
@@ -1243,7 +1262,8 @@ void print_per_system_stats( void )
         }/* IF */
 #endif /* DEBUG || _DEBUG */
     }/* FOR */
-  
+    printf("} }");
+
     free( buf );
 
 } /* print_per_system_stats() */
@@ -1500,6 +1520,7 @@ int wait_for_reply(long wait_time)
     int this_count;
     struct timeval *sent_time;
     SEQMAP_VALUE *seqmap_value;
+    float trackLoss = 0;
 
     result = recvfrom_wto( s, buffer, sizeof(buffer), &response_addr, wait_time );
 
@@ -1680,30 +1701,27 @@ int wait_for_reply(long wait_time)
         }/* IF */
     }/* IF */
 
+    if(this_count == 0 && !json_stats_flag && !runFlag)
+    {
+        runFlag = 1;
+        printf("{ ");
+    }
+
     if( per_recv_flag )
     {
-        if(timestamp_flag) {
-            printf("[%lu.%06lu] ",
-                 (unsigned long)current_time.tv_sec,
-                 (unsigned long)current_time.tv_usec);
-        }
         avg = h->total_time / h->num_recv;
-        printf( "%s%s : [%d], %d bytes, %s ms",
-            h->host, h->pad, this_count, result, sprint_tm( this_reply ) );
-        printf( " (%s avg, ", sprint_tm( avg ) );
-    
         if( h->num_recv <= h->num_sent )
         {
-            printf( "%d%% loss)",
-                ( ( h->num_sent - h->num_recv ) * 100 ) / h->num_sent );
-
+            trackLoss = (( h->num_sent - h->num_recv ) * 100)  / h->num_sent;
         }/* IF */
         else
         {
-            printf( "%d%% return)",
-                ( h->num_recv_total * 100 ) / h->num_sent );
-        
+            trackLoss = -1;
         }/* ELSE */
+        if(!json_stats_flag)
+            printf("\"%d\" : { \"host\": \"%s\", \"bytes\": %d, \"latency\": %s, \"avg\": %s, \"loss\": %0.2f }",
+                this_count, h->host, result, sprint_tm(this_reply), sprint_tm(avg), trackLoss);
+
 #ifndef IPV6
         if( response_addr.sin_addr.s_addr != h->saddr.sin_addr.s_addr )
             printf( " [<- %s]", inet_ntoa( response_addr.sin_addr ) );
@@ -1715,10 +1733,17 @@ int wait_for_reply(long wait_time)
             fprintf( stderr, " [<- %s]", buf);
         }
 #endif
-        
-        printf( "\n" );
-    
+
     }/* IF */
+    else
+    {
+        if(!json_stats_flag)
+            printf("\"%d\" : { \"host\": \"%s\", \"bytes\": %d, \"latency\": *, \"avg\": *, \"loss\": 100 }",
+                this_count, h->host, result);
+    }
+
+    if(!json_stats_flag)
+        printf(",");
 
     /* remove this job, if we are done */
     if((count_flag && h->num_recv >= count) ||
@@ -2653,6 +2678,7 @@ void usage(int is_error)
 #ifdef SO_BINDTODEVICE
         fprintf(out, "   -I if      bind to a particular interface\n");
 #endif
+    fprintf(out, "   -j n       enables the json based status mode, set n to 1");
     fprintf(out, "   -l         loop sending pings forever\n" );
     fprintf(out, "   -m         ping multiple interfaces on target host\n" );
     fprintf(out, "   -n         show targets by name (-d is equivalent)\n" );

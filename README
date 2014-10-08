@@ -1,12 +1,17 @@
 fping 3 README
 --------------
+
+This is a BETA build, please use at your own risk. Implements initial support for json datatype output.
+
+Known problem: running fping on a down host without -j 1 returns malformed json.
+
 fping is a program to send ICMP echo probes to network hosts, similar to ping,
 but much better performing when pinging multiple hosts. fping has a long long
 story: Roland Schemers did publish a first version of it in 1992 and it has
 established itself since then as a standard tool.
 
-Current maintainer:
-   David Schweikert <david@schweikert.ch>
+Maintainer of this fork:
+    Paul S. <contact+github(at)winterei(dot)se>
 
 Website:
    http://fping.org/
